@@ -1,0 +1,14 @@
+torch --index-url https://download.pytorch.org/whl/cu121
+transformers==4.35.0
+datasets
+accelerate
+captum
+scikit-learn
+scipy
+streamlit
+matplotlib
+numpy
+beautifulsoup4
+evaluate
+rouge-score
+
