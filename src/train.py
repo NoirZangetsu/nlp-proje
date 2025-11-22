@@ -84,14 +84,13 @@ def preprocess_function(
         truncation=True
     )
     
-    # Tokenize targets
-    with tokenizer.as_target_tokenizer():
-        labels = tokenizer(
-            targets,
-            max_length=max_length,
-            padding="max_length",
-            truncation=True
-        )
+    # Tokenize targets (using text_target parameter instead of deprecated as_target_tokenizer)
+    labels = tokenizer(
+        text_target=targets,
+        max_length=max_length,
+        padding="max_length",
+        truncation=True
+    )
     
     # Replace padding token id's of the labels by -100 so it's ignored by the loss
     labels["input_ids"] = [
@@ -260,15 +259,19 @@ def main():
         use_full_dataset=False
     )
     
-    # Configure training arguments (optimized for low VRAM)
+    # Configure training arguments (optimized for GPU utilization and speed)
     training_args = Seq2SeqTrainingArguments(
         output_dir=output_dir,
-        per_device_train_batch_size=4,  # Small batch size for low VRAM
-        gradient_accumulation_steps=8,   # Simulates batch size of 32
+        per_device_train_batch_size=8,   # Increased batch size for better GPU utilization
+        per_device_eval_batch_size=16,  # Larger eval batch size
+        gradient_accumulation_steps=4,   # Reduced since batch size increased (effective batch size: 32)
         fp16=True,                       # Mixed precision training
+        dataloader_num_workers=4,        # Parallel data loading for faster I/O
+        dataloader_pin_memory=True,      # Faster GPU transfer
+        gradient_checkpointing=True,     # Memory efficient (allows larger batches)
         num_train_epochs=3,
         save_total_limit=2,              # Keep only last 2 checkpoints
-        evaluation_strategy="epoch",     # Evaluate after each epoch
+        eval_strategy="epoch",           # Fixed: use eval_strategy instead of evaluation_strategy
         save_strategy="epoch",
         load_best_model_at_end=True,
         metric_for_best_model="rouge1_f1",
@@ -286,7 +289,6 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=eval_dataset,
-        tokenizer=tokenizer,
         compute_metrics=lambda eval_pred: compute_rouge_metrics(eval_pred, tokenizer)
     )
     
@@ -294,9 +296,12 @@ def main():
     print("\nStarting training...")
     print(f"Training arguments:")
     print(f"  - Batch size per device: {training_args.per_device_train_batch_size}")
+    print(f"  - Eval batch size per device: {training_args.per_device_eval_batch_size}")
     print(f"  - Gradient accumulation steps: {training_args.gradient_accumulation_steps}")
     print(f"  - Effective batch size: {training_args.per_device_train_batch_size * training_args.gradient_accumulation_steps}")
     print(f"  - Mixed precision (fp16): {training_args.fp16}")
+    print(f"  - Gradient checkpointing: {training_args.gradient_checkpointing}")
+    print(f"  - DataLoader workers: {training_args.dataloader_num_workers}")
     print(f"  - Number of epochs: {training_args.num_train_epochs}")
     print(f"  - Output directory: {output_dir}")
     print()
