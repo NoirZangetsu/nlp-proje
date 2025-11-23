@@ -11,7 +11,6 @@ import torch
 import torch.nn.functional as F
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from captum.attr import LayerIntegratedGradients
-from captum.attr._utils.attribution import Attribution
 
 import config
 
@@ -57,45 +56,81 @@ class ModelInterpreter:
         self.model.to(self.device)
         
         # Initialize Integrated Gradients attributor
-        # Target layer: embeddings (input layer)
-        # This will compute attributions for the embedding layer
+        # We'll use a custom model wrapper for proper attribution
         self.lig = LayerIntegratedGradients(
-            forward_func=self._forward_func,
-            layer=self.model.bert.embeddings
+            forward_func=self._model_forward,
+            layer=self.model.bert.embeddings.word_embeddings
         )
         
         # Storage for current input context (used in forward function)
         self._current_attention_mask: Optional[torch.Tensor] = None
     
-    def _forward_func(self, embeddings: torch.Tensor) -> torch.Tensor:
+    def _model_forward(self, input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
         """
         Forward function for Integrated Gradients computation.
         
-        This function is used by Captum's LayerIntegratedGradients. It receives
-        the embeddings (output of the target layer) and continues the forward
-        pass through the rest of the model.
-        
-        When LayerIntegratedGradients interpolates between baseline and input
-        embeddings, this function is called with the interpolated embeddings.
+        This function is used by Captum's LayerIntegratedGradients. It takes
+        input_ids and attention_mask and performs a full forward pass through the model.
+        Captum will automatically intercept at the word_embeddings layer.
         
         Args:
-            embeddings: Interpolated embeddings tensor of shape 
-                       (batch_size, seq_len, hidden_size)
+            input_ids: Token IDs tensor of shape (batch_size, seq_len)
+            attention_mask: Attention mask tensor of shape (batch_size, seq_len)
             
         Returns:
             Logits tensor of shape (batch_size, num_classes)
         """
-        # Continue forward pass from embeddings through BERT
-        outputs = self.model.bert(
-            inputs_embeds=embeddings,
-            attention_mask=self._current_attention_mask
-        )
+        # Use the stored attention mask if not provided
+        if attention_mask is None:
+            attention_mask = self._current_attention_mask
         
-        # Get pooled output and pass through classifier
-        pooled_output = outputs.pooler_output
-        logits = self.model.classifier(pooled_output)
+        # Forward pass through the model
+        outputs = self.model(input_ids=input_ids, attention_mask=attention_mask)
         
-        return logits
+        return outputs.logits
+    
+    def _get_extended_attention_mask(
+        self, 
+        attention_mask: torch.Tensor, 
+        input_shape: Tuple[int, int], 
+        device: torch.device
+    ) -> torch.Tensor:
+        """
+        Makes broadcastable attention mask and converts to additive form.
+        
+        The attention mask is converted from shape (batch_size, seq_len) to
+        (batch_size, 1, 1, seq_len) and values are transformed:
+            1 -> 0.0 (attend to this token)
+            0 -> -10000.0 (do not attend to this token)
+        
+        Args:
+            attention_mask: Binary attention mask of shape (batch_size, seq_len)
+            input_shape: Tuple of (batch_size, seq_len)
+            device: Device to place the tensor on
+            
+        Returns:
+            Extended attention mask of shape (batch_size, 1, 1, seq_len)
+        """
+        # We can provide a self-attention mask of dimensions [batch_size, from_seq_length, to_seq_length]
+        # ourselves in which case we just need to make it broadcastable to all heads.
+        if attention_mask.dim() == 3:
+            extended_attention_mask = attention_mask[:, None, :, :]
+        elif attention_mask.dim() == 2:
+            # Provided a padding mask of dimensions [batch_size, seq_len]
+            # - Make it broadcastable to [batch_size, num_heads, seq_len, seq_len]
+            extended_attention_mask = attention_mask[:, None, None, :]
+        else:
+            raise ValueError(
+                f"Wrong shape for attention_mask (shape {attention_mask.shape})"
+            )
+        
+        # Since attention_mask is 1.0 for positions we want to attend and 0.0 for
+        # masked positions, this operation will create a tensor which is 0.0 for
+        # positions we want to attend and -10000.0 for masked positions.
+        extended_attention_mask = extended_attention_mask.to(dtype=torch.float32)
+        extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
+        
+        return extended_attention_mask
     
     def predict(self, text: str) -> Tuple[torch.Tensor, int]:
         """
@@ -245,13 +280,14 @@ class ModelInterpreter:
         
         # Compute attributions
         # attributions shape: (batch_size, seq_len, hidden_size)
-        # LayerIntegratedGradients computes attributions for the embedding layer
-        # It will interpolate between baseline and input embeddings internally
+        # LayerIntegratedGradients computes attributions for the word embedding layer
+        # It will interpolate between baseline and input word embeddings internally
         attributions = self.lig.attribute(
             inputs=input_ids,
             baselines=baseline_ids,
             target=target_class,
-            n_steps=50  # Number of steps for integral approximation
+            n_steps=50,  # Number of steps for integral approximation
+            additional_forward_args=(attention_mask,)
         )
         
         # Sum attributions across embedding dimension to get token-level scores

@@ -50,7 +50,7 @@ def highlight_text_with_attributions(
     if not attributions:
         # Return plain text if no attributions
         escaped_text = text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        return f'<div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px;">{escaped_text}</div>'
+        return f'<div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; color: #212529;">{escaped_text}</div>'
     
     # Tokenize the text to get token positions
     encoded = tokenizer(
@@ -124,7 +124,7 @@ def highlight_text_with_attributions(
         if start > last_end:
             gap_text = text[last_end:start]
             gap_text = gap_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-            highlighted_parts.append(gap_text)
+            highlighted_parts.append(f'<span style="color: #212529;">{gap_text}</span>')
         
         # Get the actual text span for this token
         if start < len(text) and end <= len(text):
@@ -137,7 +137,8 @@ def highlight_text_with_attributions(
                 f'<span style="background-color: {bg_color}; '
                 f'border-left: 3px solid {border_color}; '
                 f'padding: 2px 4px; margin: 1px; '
-                f'border-radius: 3px; display: inline-block;">{token_text}</span>'
+                f'border-radius: 3px; display: inline-block; '
+                f'color: #212529;">{token_text}</span>'
             )
             
             last_end = end
@@ -146,13 +147,13 @@ def highlight_text_with_attributions(
     if last_end < len(text):
         remaining_text = text[last_end:]
         remaining_text = remaining_text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
-        highlighted_parts.append(remaining_text)
+        highlighted_parts.append(f'<span style="color: #212529;">{remaining_text}</span>')
     
     # Join all parts
     highlighted_html = ''.join(highlighted_parts)
     
     # Wrap in a container div
-    return f'<div style="line-height: 2.0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #fafafa;">{highlighted_html}</div>'
+    return f'<div style="line-height: 2.0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; background-color: #fafafa; color: #212529;">{highlighted_html}</div>'
 
 
 def get_class_label(class_idx: int) -> str:
@@ -219,7 +220,7 @@ def main():
         placeholder="Example: This movie was absolutely fantastic! The acting was superb and the plot was engaging."
     )
     
-    explain_button = st.button("🔍 Explain Decision", type="primary", use_container_width=True)
+    explain_button = st.button("🔍 Explain Decision", type="primary", width="stretch")
     
     if explain_button and input_text.strip():
         try:
@@ -289,7 +290,7 @@ def main():
                     'Token': [a['token'] for a in top_attributions],
                     'Score': [a['score'] for a in top_attributions]
                 })
-                st.dataframe(top_df, use_container_width=True, hide_index=True)
+                st.dataframe(top_df, width="stretch", hide_index=True)
             
             # Step 3: Causal Analysis
             st.markdown("---")
@@ -324,7 +325,7 @@ def main():
                            for _ in row]
                 
                 styled_df = causal_df.style.apply(highlight_effective, axis=1)
-                st.dataframe(styled_df, use_container_width=True, hide_index=True)
+                st.dataframe(styled_df, width="stretch", hide_index=True)
             else:
                 st.warning("No causal evidence found. Try a different input text.")
             
@@ -349,9 +350,10 @@ def main():
                     margin: 10px 0;
                     border-radius: 5px;
                     font-style: italic;
+                    color: #212529;
                 ">
-                    <strong>🤖 Agent Rationale:</strong><br>
-                    {rationale}
+                    <strong style="color: #212529;">🤖 Agent Rationale:</strong><br>
+                    <span style="color: #212529;">{rationale}</span>
                 </div>
                 """,
                 unsafe_allow_html=True
